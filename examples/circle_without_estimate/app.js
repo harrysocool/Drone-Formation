@@ -1,4 +1,4 @@
-var	arDroneConstants 	= require('ar-drone/lib/constants'),
+var arDroneConstants 	= require('ar-drone/lib/constants'),
     droneFormation		= require('../../'),
     state				= droneFormation.getData(),
     mission  			= droneFormation.getMission(),
