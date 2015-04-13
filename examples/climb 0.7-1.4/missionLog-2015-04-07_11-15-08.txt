@@ -1,0 +1,1 @@
+n,time,state.x,state.y,state.z,state.yaw,state.vx,state.vy,goal.x,goal.y,goal.z,goal.yaw,error.ex,error.ey,error.ez,error.eyaw,control.ux,control.uy,control.uz,control.uyaw,last_OK,ekf.s.x,ekf.s.y,ekf.s.yaw

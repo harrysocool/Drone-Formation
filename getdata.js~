@@ -1,0 +1,129 @@
+var arDrone 			= require('ar-drone'),
+	client 				= arDrone.createClient(),
+    arDroneConstants 	= require('ar-drone/lib/constants'),
+ 	EventEmitter 		= require('events').EventEmitter,
+	util         		= require('util'),
+	df 					= require('dateformat'),
+	io 					= require('socket.io'),
+	fs    				= require('fs');
+	
+var latestNavData = {
+		time:0	
+	};	
+
+function navdata_option_mask(c) {
+  return 1 << c;
+}
+
+// From the SDK.
+var navdata_options = (
+    navdata_option_mask(arDroneConstants.options.DEMO) 
+  | navdata_option_mask(arDroneConstants.options.VISION_DETECT)
+  | navdata_option_mask(arDroneConstants.options.MAGNETO)
+  | navdata_option_mask(arDroneConstants.options.WIFI)
+  | navdata_option_mask(arDroneConstants.options.ALTITUDE)
+  | navdata_option_mask(arDroneConstants.options.TIME)
+);
+
+// Connect and configure the drone
+client.config('general:navdata_demo', true);
+client.config('video:video_channel', '0');
+client.config('general:navdata_options', navdata_options);
+
+// Main Function
+util.inherits(getSimpleNavdata, EventEmitter);
+function getSimpleNavdata() {
+ 	EventEmitter.call(this);
+
+	this._client 			= client;
+  	this._state 			= {n: 0, time: 0, dt: 0, roll: 0, pitch: 0, yaw: 0, x: 0, y: 0, z: 0, bat: 0};
+    this._delta_t 			= 0;
+  	this._seq				= 0;
+  	this._bind();
+
+}
+
+getSimpleNavdata.prototype.state = function() {
+    return this._state;
+}
+
+// Add a handler on navdata updates
+getSimpleNavdata.prototype.pushData = function() {
+		this._processNavData(latestNavData);
+}
+
+getSimpleNavdata.prototype._bind = function() {
+	var self = this;
+	this._client.on('navdata', function (navdata) {
+		if(navdata.time){
+			self._delta_t = navdata.time - latestNavData.time;
+		}
+		latestNavData = navdata;
+		if(latestNavData.altitude && latestNavData.magneto.heading.fusionUnwrapped){
+			self._latestTime = navdata.time;
+			self.pushData();
+		};
+	});
+}
+
+getSimpleNavdata.prototype._processNavData = function(data) {
+    var pitch = data.demo.rotation.pitch.toRad()
+      , roll  = data.demo.rotation.roll.toRad()
+      , yaw   = data.demo.rotation.yaw.toRad()
+      , mag   = data.magneto.heading.fusionUnwrapped.toRad()
+      , vx    = data.demo.velocity.x / 1000 //We want m/s instead of mm/s
+      , vy    = data.demo.velocity.y / 1000
+      , vz    = data.demo.velocity.z / 1000
+      , alt   = data.altitude.raw / 1000
+      , dt    = this._delta_t;
+
+    var phi = (/*this._mode == "magneto" && */mag != null) ? mag : yaw;
+    
+    this._state.x = this._state.x + dt * (vx * Math.cos(phi) - vy * Math.sin(phi));
+    this._state.y = this._state.y + dt * (vx * Math.sin(phi) + vy * Math.cos(phi));
+    this._state.z = alt;
+    this._state.roll = roll;
+    this._state.pitch = pitch;
+    this._state.yaw = yaw;
+    this._state.bat = data.demo.batteryPercentage;
+    this._state.time = data.time;
+    this._state.dt = dt;
+    this._state.n = this._seq;
+    
+  	var self = this;
+  	if(this._state.roll){
+    	self.emit('state', self.state());
+    	self._seq = self._seq + 1;
+	};
+}
+
+getSimpleNavdata.prototype.log = function(path) {
+    var dataStream = fs.createWriteStream(path);
+    dataStream.write("n,time,dt,roll,pitch,yaw,x,y,z,battery"+"\n");
+    this.on('state', function(s) {
+    	var log = (s.n + "," +
+        		   s.time + "," +
+        		   s.dt + "," +
+        		   s.roll + "," +
+        		   s.pitch + "," +
+        		   s.yaw + "," +
+        		   s.x + "," +
+        		   s.y + "," +
+        		   s.z + "," +
+        		   s.bat + "\n");
+       //log = log + "\n";
+       dataStream.write(log);
+    });
+}
+
+if (typeof(Number.prototype.toRad) === "undefined") {
+  Number.prototype.toRad = function() {
+    return this * Math.PI / 180;
+  }
+}
+
+var get = new getSimpleNavdata();
+get.log("mission-" + df(new Date(), "yyyy-mm-dd_hh-MM-ss") + ".txt");
+get.on('state', function (s) {
+    console.log(s);
+});
